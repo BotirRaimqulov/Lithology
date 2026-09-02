@@ -2,7 +2,7 @@ import numpy as np
 
 from lithology.postprocess.interval_reconstruction import (
     boundary_depth_errors, interval_iou, majority_vote_smooth, merge_short_runs,
-    reconstruct_well_intervals,
+    reconstruct_single_task_intervals, reconstruct_well_intervals,
 )
 
 
@@ -44,6 +44,27 @@ def test_boundary_depth_errors_meters():
     result = boundary_depth_errors([4.0, 5.0], [4.05, 5.2], max_match_distance_m=0.5)
     assert result["n_missed"] == 0
     assert abs(result["mean_error_m"] - 0.125) < 1e-6
+
+
+def test_single_task_intervals_are_independent_of_the_other_task():
+    # Lithology changes at depth 4, zone changes at depth 7 -- a single-task
+    # reconstruction of each must reflect ONLY its own boundaries, proving
+    # the two tasks are not silently coupled into one segmentation.
+    depth = np.round(np.arange(0, 10, 0.1), 2)
+    n = len(depth)
+    litho = np.zeros(n, dtype=int)
+    litho[40:] = 1
+    zone = np.zeros(n, dtype=int)
+    zone[70:] = 1
+    conf = np.ones(n)
+
+    litho_df = reconstruct_single_task_intervals("W1", depth, litho, conf, {0: "Sandstone", 1: "Shale"}, "lithology")
+    zone_df = reconstruct_single_task_intervals("W1", depth, zone, conf, {0: "Q4", 1: "N1"}, "zone")
+
+    assert list(litho_df["top"]) == [0.0, 4.0]
+    assert list(zone_df["top"]) == [0.0, 7.0]
+    assert "zone" not in litho_df.columns
+    assert "lithology" not in zone_df.columns
 
 
 def test_interval_iou_perfect_match():

@@ -91,6 +91,49 @@ class IntervalTableResult:
     df: pd.DataFrame
 
 
+def reconstruct_single_task_intervals(
+    well_id: str,
+    depth: np.ndarray,
+    label_ids: np.ndarray,
+    confidence: np.ndarray,
+    id_to_name: dict,
+    label_column: str,
+    smoothing_window: int = 5,
+    min_run_points: int = 3,
+) -> pd.DataFrame:
+    """Run-length-encode a SINGLE task's predictions (lithology-only or
+    zone-only) into its own interval table, with boundaries driven purely
+    by that task's own label changes -- independent of the other task.
+
+    Use this (rather than :func:`reconstruct_well_intervals`, whose interval
+    boundaries are the union of lithology AND zone changes) whenever you
+    need to verify the two tasks aren't just echoing each other, or want a
+    lithology log and a stratigraphic column separately.
+    """
+    labels = merge_short_runs(majority_vote_smooth(label_ids, smoothing_window), min_run_points)
+    n = len(depth)
+    rows = []
+    if n == 0:
+        return pd.DataFrame(columns=["well", "top", "bottom", "thickness", label_column, f"{label_column}_confidence"])
+
+    start = 0
+    for i in range(1, n + 1):
+        if i == n or labels[i] != labels[start]:
+            end = i
+            top, bottom = float(depth[start]), float(depth[min(end, n - 1)])
+            label_id = int(labels[start])
+            rows.append({
+                "well": well_id,
+                "top": top,
+                "bottom": bottom,
+                "thickness": bottom - top,
+                label_column: id_to_name.get(label_id, "UNKNOWN") if label_id != IGNORE_INDEX else None,
+                f"{label_column}_confidence": float(np.mean(confidence[start:end])),
+            })
+            start = i
+    return pd.DataFrame(rows)
+
+
 def reconstruct_well_intervals(
     well_id: str,
     depth: np.ndarray,

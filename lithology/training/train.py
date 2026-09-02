@@ -139,6 +139,13 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
     feature_names = json.loads((meta_dir / "feature_names.json").read_text())
     num_lithology = len(label_maps["lithology"])
     num_zone = len(label_maps["zone"])
+    # Embedded in the checkpoint so a fresh, unlabeled LAS file (see
+    # tools/predict_well.py) can be normalized identically to training
+    # without needing access to the exported dataset directory. Only
+    # present for holdout/explicit splits (a single global normalization);
+    # cross-validation mode fits normalization per-fold instead.
+    normalization_path = meta_dir / "normalization.json"
+    normalization = json.loads(normalization_path.read_text()) if normalization_path.exists() else None
 
     fmt = config.dataset.format
     train_wells = load_well_arrays(dataset_dir / "train", feature_names, fmt)
@@ -242,7 +249,9 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
             patience_left = config.training.early_stopping_patience
             torch.save(
                 {"model_state": model.state_dict(), "model_config": model_config.__dict__,
-                 "feature_names": feature_names, "label_maps": label_maps, "epoch": epoch},
+                 "feature_names": feature_names, "label_maps": label_maps, "epoch": epoch,
+                 "normalization": normalization, "features_config": config.features.__dict__,
+                 "alignment_config": config.alignment.__dict__},
                 run_dir / "checkpoint_best.pt",
             )
         else:
