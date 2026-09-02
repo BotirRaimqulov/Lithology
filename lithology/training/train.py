@@ -82,6 +82,26 @@ def class_balanced_weights(well_arrays: list, label_attr: str, num_classes: int)
     return torch.tensor(weights, dtype=torch.float32)
 
 
+def boundary_pos_weight(well_arrays: list) -> "torch.Tensor":
+    """Positive-class weight for the boundary BCE loss.
+
+    A true boundary is only marked positive within a small tolerance band
+    (default +/-1 sample) around each expert top/bottom, so negatives
+    outnumber positives by a large margin -- without reweighting, BCE loss
+    is minimized by predicting "no boundary" everywhere, which is exactly
+    what an unweighted boundary head degenerates to (precision/recall both
+    0 at the default 0.5 threshold).
+    """
+    n_pos, n_neg = 0, 0
+    for w in well_arrays:
+        labels = w.boundary_label
+        valid = labels[labels != IGNORE_INDEX]
+        n_pos += int((valid == 1).sum())
+        n_neg += int((valid == 0).sum())
+    n_pos = max(n_pos, 1)
+    return torch.tensor(n_neg / n_pos, dtype=torch.float32)
+
+
 @dataclass
 class TrainResult:
     run_dir: str
@@ -168,12 +188,14 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
         if config.training.class_balanced_loss else None
     zone_w = class_balanced_weights(train_wells, "zone_label", num_zone).to(device) \
         if config.training.class_balanced_loss else None
+    boundary_w = boundary_pos_weight(train_wells).to(device) if config.training.class_balanced_loss else None
     loss_fn = MultiTaskLoss(
         weight_lithology=config.training.weight_lithology,
         weight_zone=config.training.weight_zone,
         weight_boundary=config.training.weight_boundary,
         lithology_class_weights=litho_w,
         zone_class_weights=zone_w,
+        boundary_pos_weight=boundary_w,
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate,
