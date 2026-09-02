@@ -8,7 +8,7 @@ import pandas as pd
 
 from lithology.io.csv_common import (
     ROLE_BOTTOM, ROLE_THICKNESS, ROLE_TOP, ROLE_WELL, ROLE_ZONE,
-    ColumnResolution, read_csv_robust, resolve_columns,
+    ColumnResolution, _column_preview, read_csv_robust, resolve_columns,
 )
 
 
@@ -52,7 +52,7 @@ def parse_stratigraphy_csv(path: str, thickness_tolerance: float = 1e-3) -> Stra
     if missing:
         raise CSVSchemaError(
             f"Stratigraphy CSV {path} is missing required column role(s) {missing}. "
-            f"Columns present: {list(df.columns)}"
+            f"Columns present: {list(df.columns)}\n{_column_preview(df)}"
         )
 
     well_col = cols.role_to_column[ROLE_WELL]

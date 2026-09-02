@@ -32,7 +32,7 @@ import pandas as pd
 
 from lithology.io.csv_common import (
     ROLE_BOTTOM, ROLE_CODE, ROLE_DATASET, ROLE_MARKER, ROLE_MD, ROLE_TOP, ROLE_WELL,
-    ColumnResolution, extract_marker, read_csv_robust, resolve_columns,
+    ColumnResolution, _column_preview, extract_marker, read_csv_robust, resolve_columns,
 )
 
 
@@ -82,17 +82,22 @@ def parse_lithology_csv(path: str, core_marker_symbols: tuple = ("*",)) -> Litho
     if not has_well:
         raise CSVSchemaError(
             f"Could not detect a well-identifier column in {path}. "
-            f"Columns present: {list(df.columns)}"
+            f"Columns present: {list(df.columns)}\n{_column_preview(df)}"
         )
     if not has_code:
         raise CSVSchemaError(
             f"Could not detect a lithology-code column in {path}. "
-            f"Columns present: {list(df.columns)}"
+            f"Columns present: {list(df.columns)}\n"
+            f"None of them matched known code/lithology aliases (kod, code, litho...). "
+            f"If one of the columns below actually holds the lithology value under a "
+            f"different header name (e.g. it was auto-mapped to 'zone' instead), rename "
+            f"it or add the alias to lithology/io/csv_common.py:COLUMN_ALIASES[ROLE_CODE].\n"
+            f"{_column_preview(df)}"
         )
     if not has_md and not has_interval:
         raise CSVSchemaError(
             f"Could not detect either an MD (point) column or top/bottom (interval) "
-            f"columns in {path}. Columns present: {list(df.columns)}"
+            f"columns in {path}. Columns present: {list(df.columns)}\n{_column_preview(df)}"
         )
 
     if has_interval:

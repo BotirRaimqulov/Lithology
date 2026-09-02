@@ -100,6 +100,18 @@ def resolve_columns(columns: list[str]) -> ColumnResolution:
     return ColumnResolution(role_to_column=role_to_column, unresolved_columns=unresolved)
 
 
+def _column_preview(df: pd.DataFrame, n_values: int = 8) -> str:
+    """A per-column sample of unique values, for schema-detection error
+    messages -- when column *names* don't match any known alias, seeing the
+    actual *content* is often the only way to tell which column is which
+    without guessing."""
+    lines = ["Sample values per column (to help identify the right one):"]
+    for col in df.columns:
+        values = df[col].dropna().unique()[:n_values].tolist()
+        lines.append(f"    {col!r}: {values}")
+    return "\n".join(lines)
+
+
 def read_csv_robust(path: str) -> pd.DataFrame:
     """Read a CSV trying a few encodings/separators commonly seen from Excel exports."""
     last_err = None

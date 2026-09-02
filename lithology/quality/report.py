@@ -11,6 +11,7 @@ instead of showing zeros that could be mistaken for "checked, found none".
 from __future__ import annotations
 
 import collections
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,18 @@ from lithology.io.las_parser import LASFile, LASParseError, find_las_files, pars
 from lithology.io.lithology_csv import CSVSchemaError as LithoSchemaError, parse_lithology_csv
 from lithology.io.stratigraphy_csv import CSVSchemaError as StratSchemaError, parse_stratigraphy_csv
 from lithology.wells.well_id import WellMatchReport, build_well_match_report, normalize_well_id
+
+
+def _bucket_dropped_reasons(dropped: list) -> dict:
+    """Group (row_index, reason) drop records by reason *shape*, collapsing
+    the dynamic numbers inside a message (e.g. "bottom (5.0) < top (10.0)")
+    so 500 rows dropped for the same underlying cause show up as one
+    line with a count, not 500 near-duplicate messages."""
+    counts: collections.Counter = collections.Counter()
+    for _, reason in dropped:
+        bucket = re.sub(r"[-+]?\d+\.?\d*", "#", reason)
+        counts[bucket] += 1
+    return dict(counts.most_common())
 
 
 @dataclass
@@ -120,11 +133,15 @@ class DataQualityReport:
         else:
             lines.append(f"Lithology records parsed  : {self.n_lithology_records} "
                           f"(dropped {len(self.lithology_dropped)})")
+            for reason, count in _bucket_dropped_reasons(self.lithology_dropped).items():
+                lines.append(f"        dropped x{count}: {reason}")
         if self.stratigraphy_parse_error:
             lines.append(f"Stratigraphy CSV FAILED to parse: {self.stratigraphy_parse_error}")
         else:
             lines.append(f"Stratigraphy records parsed: {self.n_stratigraphy_records} "
                           f"(dropped {len(self.stratigraphy_dropped)})")
+            for reason, count in _bucket_dropped_reasons(self.stratigraphy_dropped).items():
+                lines.append(f"        dropped x{count}: {reason}")
 
         if self.well_match is not None:
             s = self.well_match.summary()
