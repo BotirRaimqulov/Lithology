@@ -8,6 +8,18 @@ All three weights are configurable (``training.weight_*``). Points with no
 ground truth (``IGNORE_INDEX``) are excluded from every term -- including
 the boundary term, where ``BCEWithLogitsLoss`` has no built-in
 ``ignore_index`` so it is masked out manually here.
+
+Real well-log data commonly has large depth stretches with no expert label
+at all (lithology core samples/intervals rarely span a whole well). If an
+entire training crop -- or, worse, an entire flattened batch -- happens to
+have every lithology (or zone) position equal to ``IGNORE_INDEX``,
+``F.cross_entropy(..., ignore_index=...)`` divides 0/0 and returns NaN.
+That NaN then backpropagates through the shared encoder and permanently
+corrupts every model weight (every later forward pass outputs NaN), which
+is silent until something downstream -- e.g. an sklearn metric -- refuses
+NaN input. Each term below is therefore skipped (contributes zero, not
+NaN) whenever its batch has no valid targets at all, mirroring the guard
+the boundary term already needed.
 """
 from __future__ import annotations
 
@@ -38,22 +50,24 @@ class MultiTaskLoss(nn.Module):
         self.register_buffer("zone_class_weights", zone_class_weights, persistent=False)
         self.register_buffer("boundary_pos_weight", boundary_pos_weight, persistent=False)
 
+    @staticmethod
+    def _safe_cross_entropy(logits: torch.Tensor, target: torch.Tensor, weight, ignore_index: int) -> torch.Tensor:
+        flat_logits = logits.reshape(-1, logits.shape[-1])
+        flat_target = target.reshape(-1)
+        if (flat_target != ignore_index).any():
+            return F.cross_entropy(flat_logits, flat_target, weight=weight, ignore_index=ignore_index)
+        return torch.zeros((), device=logits.device)
+
     def forward(self, outputs: dict, batch: dict) -> tuple:
         litho_logits = outputs["lithology_logits"]   # (B, L, K1)
         zone_logits = outputs["zone_logits"]          # (B, L, K2)
         boundary_logits = outputs["boundary_logits"]  # (B, L)
 
-        litho_loss = F.cross_entropy(
-            litho_logits.reshape(-1, litho_logits.shape[-1]),
-            batch["lithology_label"].reshape(-1),
-            weight=self.lithology_class_weights,
-            ignore_index=IGNORE_INDEX,
+        litho_loss = self._safe_cross_entropy(
+            litho_logits, batch["lithology_label"], self.lithology_class_weights, IGNORE_INDEX
         )
-        zone_loss = F.cross_entropy(
-            zone_logits.reshape(-1, zone_logits.shape[-1]),
-            batch["zone_label"].reshape(-1),
-            weight=self.zone_class_weights,
-            ignore_index=IGNORE_INDEX,
+        zone_loss = self._safe_cross_entropy(
+            zone_logits, batch["zone_label"], self.zone_class_weights, IGNORE_INDEX
         )
 
         boundary_target = batch["boundary_label"]

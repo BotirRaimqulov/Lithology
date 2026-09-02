@@ -39,7 +39,13 @@ def test_output_length_matches_input_length_regardless_of_crop_size():
         assert out["lithology_logits"].shape[1] == length
 
 
-def test_ignore_index_excluded_from_loss():
+def test_all_ignored_batch_never_produces_nan_loss():
+    # Regression test: a real well-log crop can legitimately have zero
+    # expert-labeled points for a task (lithology core samples/intervals
+    # rarely span a whole well). F.cross_entropy(..., ignore_index=...)
+    # returns NaN (0/0) when every target in the batch is ignored, and
+    # that NaN silently corrupts every model weight via backprop. All
+    # three loss terms must degrade to 0, never NaN, in that case.
     cfg = ModelConfig(num_classes_lithology=3, num_classes_zone=2, base_channels=8, num_blocks=(1,))
     model = MultiTaskLithologyModel(in_features=4, config=cfg)
     x = torch.randn(1, 4, 32)
@@ -51,8 +57,11 @@ def test_ignore_index_excluded_from_loss():
     }
     loss_fn = MultiTaskLoss()
     total, parts = loss_fn(out, batch)
-    # cross_entropy with all-ignored targets returns nan; boundary returns 0 (masked out).
+    assert parts["loss_lithology"] == 0.0
+    assert parts["loss_zone"] == 0.0
     assert parts["loss_boundary"] == 0.0
+    assert total.item() == 0.0
+    assert not torch.isnan(total)
 
 
 def test_receptive_field_grows_with_more_blocks():

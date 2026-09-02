@@ -48,6 +48,21 @@ def boundary_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 
     if len(y_true) == 0 or y_true.sum() == 0:
         return {"n_points": int(len(y_true)), "note": "no positive boundary points to score"}
 
+    non_finite = ~np.isfinite(y_prob)
+    if non_finite.any():
+        # A model that has diverged (e.g. a NaN loss corrupted its weights,
+        # or the learning rate is too high) will emit NaN/Inf predictions.
+        # Report that clearly instead of letting sklearn raise deep inside
+        # a validation loop -- this is a model/training problem, not a
+        # metrics-computation bug, so surface it as such.
+        return {
+            "n_points": int(len(y_true)),
+            "error": f"{int(non_finite.sum())}/{len(y_prob)} predicted boundary "
+                     f"probabilities are NaN/Inf -- the model has diverged "
+                     f"(check for a NaN loss, learning rate too high, or unnormalized "
+                     f"input features with extreme outliers).",
+        }
+
     y_pred = (y_prob >= threshold).astype(int)
     precision, recall, f1, _ = precision_recall_fscore_support(
         y_true, y_pred, labels=[0, 1], average=None, zero_division=0

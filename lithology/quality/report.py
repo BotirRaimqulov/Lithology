@@ -178,6 +178,27 @@ class DataQualityReport:
         lines.append(f"Lithology (point/core): unmatched  : {self.n_lithology_point_unmatched}")
         lines.append(f"Lithology (point/core): conflicts  : {self.n_lithology_point_conflicts}")
 
+        lithology_covered = sum(self.lithology_class_distribution.values())
+        zone_covered = sum(self.zone_distribution.values())
+        lithology_coverage = lithology_covered / self.total_depth_points if self.total_depth_points else 0.0
+        zone_coverage = zone_covered / self.total_depth_points if self.total_depth_points else 0.0
+
+        lines.append("")
+        lines.append("-- Label coverage " + "-" * 59)
+        lines.append(f"Depth points with a lithology label: {lithology_covered}/{self.total_depth_points} "
+                     f"({lithology_coverage:.1%})")
+        lines.append(f"Depth points with a zone label      : {zone_covered}/{self.total_depth_points} "
+                     f"({zone_coverage:.1%})")
+        if lithology_coverage < 0.5 or zone_coverage < 0.5:
+            lines.append(
+                "    NOTE: less than half of the depth range has a label for at least one task. "
+                "This is common for well logs (core samples/mapped intervals rarely span the "
+                "whole well) but means many training crops will have zero valid targets for "
+                "that task -- those crops correctly contribute 0 loss for it rather than NaN "
+                "(see lithology/models/losses.py), but if coverage is extremely sparse, consider "
+                "a smaller training crop length so more crops land entirely inside a labeled span."
+            )
+
         lines.append("")
         lines.append("-- Class distributions " + "-" * 54)
         lines.append(f"Lithology classes ({len(self.lithology_class_distribution)}): "
