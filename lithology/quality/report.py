@@ -11,6 +11,7 @@ instead of showing zeros that could be mistaken for "checked, found none".
 from __future__ import annotations
 
 import collections
+import copy
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -133,6 +134,27 @@ class DataQualityReport:
         if not self.zone_distribution:
             reasons.append("No stratigraphic zone labels were assigned to any depth point.")
         return (len(reasons) == 0), reasons
+
+    def restricted_to(self, wells: list) -> "DataQualityReport":
+        """A shallow copy of this report covering ONLY the given (matched)
+        well ids -- e.g. for tools/learning_curve.py, which needs to export
+        a dataset from a deliberately reduced well subset.
+
+        Without this, passing a partial ``split.train_wells`` straight to
+        :func:`export_dataset` would trip the "never silently drop a well"
+        safety net in :func:`~lithology.dataset.split.split_wells`: any
+        well from the FULL report that isn't mentioned in train/val/test
+        gets treated as an accidental omission and re-added to train,
+        silently defeating the deliberate subset.
+        """
+        wells_set = set(wells)
+        new = copy.copy(self)
+        new.aligned_wells = {w: v for w, v in self.aligned_wells.items() if w in wells_set}
+        if self.well_match is not None:
+            new_match = copy.copy(self.well_match)
+            new_match.matched = {w: v for w, v in self.well_match.matched.items() if w in wells_set}
+            new.well_match = new_match
+        return new
 
     def to_text(self) -> str:
         lines = []

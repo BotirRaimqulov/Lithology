@@ -92,3 +92,46 @@ def test_las_warnings_are_bucketed_not_repeated_per_file():
     assert "utf-#" in shape  # hyphen preserved, not swallowed by number-collapsing
     assert entry["count"] == 36  # 49 - ceil(49/4) files hit the i % 4 != 0 branch
     assert len(entry["examples"]) <= 3
+
+
+def test_restricted_to_excludes_wells_from_split_safety_net(tmp_path):
+    # Regression test: tools/learning_curve.py needs to train on a strict
+    # SUBSET of the available training wells while keeping val/test fixed.
+    # Without restricted_to(), split_wells()'s "never silently drop a well"
+    # safety net would treat every well outside the explicit train/val/test
+    # lists as an accidental omission and re-add it to train, silently
+    # defeating the deliberate subset.
+    from lithology.config import SplitConfig
+    from lithology.dataset.split import split_wells
+
+    las_dir = tmp_path / "las"
+    las_dir.mkdir()
+    csv_dir = tmp_path / "csv"
+    csv_dir.mkdir()
+
+    wells = [f"W{i}" for i in range(6)]
+    litho_rows = ["Well,top,bottom,kod"]
+    strat_rows = ["Well,Zone Name,top,bottom,Thickness"]
+    for w in wells:
+        depth = _write_las(las_dir, w, n=20)
+        litho_rows.append(f"{w},0,{depth[-1]},4")
+        strat_rows.append(f"{w},Q4,0,{depth[-1]},{depth[-1]}")
+    (csv_dir / "lithology.csv").write_text("\n".join(litho_rows))
+    (csv_dir / "stratigraphy.csv").write_text("\n".join(strat_rows))
+
+    cfg = Config()
+    cfg.data.las_dir = str(las_dir)
+    cfg.data.lithology_csv = str(csv_dir / "lithology.csv")
+    cfg.data.stratigraphy_csv = str(csv_dir / "stratigraphy.csv")
+    report = build_data_quality_report(cfg)
+    assert set(report.aligned_wells.keys()) == set(wells)
+
+    # Deliberately restrict to only 2 of the 4 "train" wells, keeping the
+    # other 2 as val/test.
+    subset_train, val_wells, test_wells = ["W0", "W1"], ["W2"], ["W3"]
+    restricted = report.restricted_to(subset_train + val_wells + test_wells)
+    assert set(restricted.aligned_wells.keys()) == {"W0", "W1", "W2", "W3"}
+
+    split_cfg = SplitConfig(train_wells=subset_train, val_wells=val_wells, test_wells=test_wells)
+    result = split_wells(list(restricted.aligned_wells.keys()), split_cfg)
+    assert set(result.train) == {"W0", "W1"}  # W4/W5 (never mentioned) must NOT reappear here
