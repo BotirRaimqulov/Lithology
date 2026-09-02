@@ -49,6 +49,23 @@ def test_core_verified_filtering():
     assert aw.lithology_label_raw[2] == "5"   # raw value preserved for transparency
 
 
+def test_interval_schema_lithology_does_not_crash_and_labels_whole_span():
+    # Regression test for the tuple-payload NumPy broadcast bug: interval-
+    # schema lithology (top/bottom given, not a single MD point) must label
+    # every covered depth point without raising.
+    depth = _depth(n=50)
+    litho = [
+        LithologyRecord("W", 0.0, 2.0, False, "5*", "5", True, "Lithology", 0),
+        LithologyRecord("W", 2.0, 4.9, False, "6", "6", False, "Lithology", 1),
+    ]
+    aw = align_well("W", depth, 0.1, [], litho, AlignmentConfig())
+    assert aw.lithology_label_raw[0] == "5"
+    assert aw.lithology_label_raw[19] == "5"   # depth 1.9, still first interval
+    assert aw.lithology_label_raw[20] == "6"   # depth 2.0, second interval starts
+    assert all(v is not None for v in aw.lithology_label_raw)
+    assert (aw.lithology_source == "interval").all()
+
+
 def test_boundary_label_ignore_where_no_coverage_positive_near_true_boundary():
     depth = _depth()
     zones = [StratigraphyRecord("W", "Q4", 0.0, 1.0, 1.0, 1.0, 0)]  # only covers first half

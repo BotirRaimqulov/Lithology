@@ -37,3 +37,15 @@ def test_duplicate_intervals_detected():
     _, diag = assign_intervals_to_depth(depth, intervals, semantics="half_open")
     assert diag.n_duplicate_pairs == 1
     assert diag.duplicate_row_index_pairs == [(0, 1)]
+
+
+def test_tuple_payload_does_not_trigger_numpy_broadcast_error():
+    # Regression test: interval-schema lithology stores payload as a
+    # (code, core_verified) tuple. A naive `payload[mask] = interval.payload`
+    # makes NumPy try to broadcast the tuple's 2 elements across every
+    # masked position instead of storing it as one object.
+    depth = np.round(np.arange(0, 5.0, 0.1), 2)  # 50 points
+    intervals = [Interval(0.0, 5.0, ("5", True), 0)]
+    payload, diag = assign_intervals_to_depth(depth, intervals, semantics="half_open")
+    assert diag.n_conflicting_points == 0
+    assert all(p == ("5", True) for p in payload)

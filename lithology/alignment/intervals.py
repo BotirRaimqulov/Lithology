@@ -110,7 +110,13 @@ def assign_intervals_to_depth(
             diag.conflicting_interval_row_indices.append(interval.row_index)
 
         new_mask = mask & (owner_row == -1)
-        payload[new_mask] = interval.payload
+        # Assign element-by-element rather than `payload[new_mask] = interval.payload`:
+        # when the payload is itself a sequence (e.g. the (code, core_verified) tuple
+        # used for interval-schema lithology), NumPy's boolean-mask assignment tries to
+        # broadcast the tuple's elements across the masked slots instead of storing it
+        # as a single object, raising a shape-mismatch error.
+        for idx in np.flatnonzero(new_mask):
+            payload[idx] = interval.payload
         owner_row[new_mask] = interval.row_index
 
     diag.n_conflicting_points = int(conflict.sum())
