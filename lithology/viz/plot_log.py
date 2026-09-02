@@ -14,6 +14,30 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def _robust_xlim(values: np.ndarray, low_pct: float = 1.0, high_pct: float = 99.0, pad_frac: float = 0.1):
+    """A percentile-based x-axis range for one curve track.
+
+    Real well-log curves (especially resistivity/KS) can have a handful of
+    extreme outlier spikes -- matplotlib's default autoscale stretches the
+    axis to include them, which crushes the actual, geologically
+    meaningful oscillation into a barely-visible sliver near one edge.
+    Clipping the visible range to the 1st-99th percentile (with padding)
+    keeps the outlier off-screen (the curve simply runs off the plot edge
+    there, which is itself a visible signal that something anomalous is
+    happening) while keeping the normal range readable.
+    """
+    finite = values[np.isfinite(values)]
+    if len(finite) == 0:
+        return None
+    lo, hi = np.percentile(finite, [low_pct, high_pct])
+    if hi - lo < 1e-9:
+        lo, hi = float(finite.min()), float(finite.max())
+        if hi - lo < 1e-9:
+            hi = lo + 1.0
+    pad = (hi - lo) * pad_frac
+    return lo - pad, hi + pad
+
+
 def _categorical_track(ax, depth: np.ndarray, labels: np.ndarray, title: str, color_map: dict):
     """Draw a labeled color-band track (one horizontal bar of varying color
     per contiguous run of the same label)."""
@@ -93,6 +117,9 @@ def plot_well_log(
         if missing.any():
             ax.scatter(np.zeros(missing.sum()), depth[missing], marker="x", color="red", s=8,
                        label="missing")
+        xlim = _robust_xlim(values)
+        if xlim:
+            ax.set_xlim(*xlim)
         ax.set_title(curve_name, fontsize=9)
         ax.invert_yaxis()
         ax.set_ylim(depth.max(), depth.min())
