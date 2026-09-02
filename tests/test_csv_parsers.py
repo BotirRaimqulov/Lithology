@@ -54,3 +54,18 @@ def test_stratigraphy_parsing_and_thickness_mismatch(tmp_path):
     assert res.records[1].thickness_declared == 999
     assert res.records[1].thickness_computed == 50
     assert any("disagrees" in w for w in res.warnings)
+
+
+def test_inconsistent_zone_name_spacing_merges_into_one_class(tmp_path):
+    # Real data mixes "P 3-N1/1" and "P3-N1/1" for the same geological unit
+    # (an interior-space data-entry inconsistency, not a real distinction).
+    p = tmp_path / "strat.csv"
+    p.write_text(
+        "Well,Zone name,top,bottom\n"
+        "2006,P 3-N1/1,0,10\n"
+        "2006,P3-N1/1,10,20\n"
+    )
+    res = parse_stratigraphy_csv(str(p))
+    zone_names = {r.zone_name for r in res.records}
+    assert zone_names == {"P3-N1/1"}
+    assert any("whitespace stripped" in w for w in res.warnings)

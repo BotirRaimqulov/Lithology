@@ -100,6 +100,22 @@ def resolve_columns(columns: list[str]) -> ColumnResolution:
     return ColumnResolution(role_to_column=role_to_column, unresolved_columns=unresolved)
 
 
+def normalize_label_text(value: object) -> str:
+    """Canonicalize a zone/lithology label string.
+
+    Real expert CSVs routinely spell the same geological unit two ways in
+    different rows -- e.g. "P 3-N1/1" and "P3-N1/1" -- because the interior
+    space is a data-entry inconsistency, not a meaningful separator, in
+    these compact stratigraphic/lithologic codes. Left alone, the two
+    spellings become two different label-vocabulary classes, forcing the
+    model to arbitrarily split what is actually one class between them.
+    This strips ALL whitespace (not just leading/trailing) so both
+    spellings collapse to the same canonical string.
+    """
+    text = "" if value is None else str(value)
+    return re.sub(r"\s+", "", text)
+
+
 def _column_preview(df: pd.DataFrame, n_values: int = 8) -> str:
     """A per-column sample of unique values, for schema-detection error
     messages -- when column *names* don't match any known alias, seeing the

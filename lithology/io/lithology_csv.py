@@ -32,7 +32,7 @@ import pandas as pd
 
 from lithology.io.csv_common import (
     ROLE_BOTTOM, ROLE_CODE, ROLE_DATASET, ROLE_MARKER, ROLE_MD, ROLE_TOP, ROLE_WELL,
-    ColumnResolution, _column_preview, extract_marker, read_csv_robust, resolve_columns,
+    ColumnResolution, _column_preview, extract_marker, normalize_label_text, read_csv_robust, resolve_columns,
 )
 
 
@@ -127,6 +127,9 @@ def parse_lithology_csv(path: str, core_marker_symbols: tuple = ("*",)) -> Litho
             result.dropped.append((idx, "missing lithology code"))
             continue
         code_clean, core_from_code = extract_marker(code_cell, core_marker_symbols)
+        # Same inconsistent-whitespace normalization as stratigraphy zone
+        # names (e.g. a code sheet mixing "AB CD" and "ABCD" for one unit).
+        code_clean = normalize_label_text(code_clean)
         if not code_clean:
             result.dropped.append((idx, f"lithology code empty after stripping marker ({code_cell!r})"))
             continue

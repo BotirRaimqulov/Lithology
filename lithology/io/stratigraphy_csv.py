@@ -8,7 +8,7 @@ import pandas as pd
 
 from lithology.io.csv_common import (
     ROLE_BOTTOM, ROLE_THICKNESS, ROLE_TOP, ROLE_WELL, ROLE_ZONE,
-    ColumnResolution, _column_preview, read_csv_robust, resolve_columns,
+    ColumnResolution, _column_preview, normalize_label_text, read_csv_robust, resolve_columns,
 )
 
 
@@ -62,6 +62,7 @@ def parse_stratigraphy_csv(path: str, thickness_tolerance: float = 1e-3) -> Stra
     thickness_col = cols.role_to_column.get(ROLE_THICKNESS)
 
     n_thickness_mismatch = 0
+    n_zone_name_normalized = 0
     for idx, row in df.iterrows():
         well_val = row[well_col]
         if pd.isna(well_val) or str(well_val).strip() == "":
@@ -72,6 +73,9 @@ def parse_stratigraphy_csv(path: str, thickness_tolerance: float = 1e-3) -> Stra
         if pd.isna(zone_val) or str(zone_val).strip() == "":
             result.dropped.append((idx, "missing zone name"))
             continue
+        zone_name = normalize_label_text(zone_val)
+        if zone_name != str(zone_val).strip():
+            n_zone_name_normalized += 1
 
         top_val = pd.to_numeric(row[top_col], errors="coerce")
         bottom_val = pd.to_numeric(row[bottom_col], errors="coerce")
@@ -99,7 +103,7 @@ def parse_stratigraphy_csv(path: str, thickness_tolerance: float = 1e-3) -> Stra
         result.records.append(
             StratigraphyRecord(
                 well_raw=str(well_val).strip(),
-                zone_name=str(zone_val).strip(),
+                zone_name=zone_name,
                 top=top_val,
                 bottom=bottom_val,
                 thickness_declared=thickness_declared,
@@ -118,6 +122,12 @@ def parse_stratigraphy_csv(path: str, thickness_tolerance: float = 1e-3) -> Stra
             f"{n_thickness_mismatch} row(s) have a declared Thickness that disagrees with "
             f"(bottom - top) by more than {thickness_tolerance}; computed thickness is used "
             f"downstream, declared value is kept for reference."
+        )
+    if n_zone_name_normalized:
+        result.warnings.append(
+            f"{n_zone_name_normalized} row(s) had internal whitespace stripped from Zone Name "
+            f"(e.g. 'P 3-N1/1' -> 'P3-N1/1') to merge inconsistent spellings of the same zone "
+            f"into one label-vocabulary class."
         )
 
     return result
