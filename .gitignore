@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Real well-log data is provided locally, not committed to the repo.
+data/las/*
+!data/las/.gitkeep
+data/csv/*
+!data/csv/.gitkeep
+
+# Generated artifacts (dataset export, experiments, reports).
+outputs/*
+!outputs/.gitkeep

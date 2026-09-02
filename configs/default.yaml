@@ -1,0 +1,87 @@
+# Default pipeline configuration.
+#
+# Nothing here is fabricated data -- these are the paths/knobs the pipeline
+# will use once real LAS/CSV files are placed in `data/las` and `data/csv`.
+# Run `python tools/inspect_dataset.py` after placing files to validate them
+# against this config before doing anything else.
+
+data:
+  las_dir: data/las
+  lithology_csv: data/csv/lithology.csv
+  stratigraphy_csv: data/csv/stratigraphy.csv
+  output_dir: outputs
+
+sampling:
+  context_unit: meters      # "points" or "meters"
+  context_size: 7.0         # +/- context radius around each target point
+
+alignment:
+  interval_semantics: half_open   # "closed" -> [top, bottom] | "half_open" -> [top, bottom)
+  core_marker_symbols: ["*"]
+  require_core_verified_for_lithology: false
+  boundary_tolerance_points: 1
+  min_interval_thickness_m: 0.0
+
+features:
+  use_raw: true
+  use_missing_mask: true
+  use_derivatives: true
+  derivative_orders: [1, 2]
+  use_rolling_statistics: true
+  rolling_windows_m: [1.0, 3.0]
+  rolling_stats: ["mean", "std", "min", "max"]
+  use_cross_curve: true
+
+model:
+  encoder: resnet1d
+  base_channels: 64
+  num_blocks: [2, 2, 2, 2]
+  kernel_size: 7
+  dropout: 0.1
+  sequence_encoder: gru      # "none" | "gru" | "transformer"
+  sequence_hidden_size: 128
+  sequence_num_layers: 1
+  sequence_num_heads: 4
+  num_classes_lithology: null   # resolved automatically from the training labels
+  num_classes_zone: null        # resolved automatically from the training labels
+
+training:
+  batch_size: 64
+  epochs: 50
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  weight_lithology: 1.0
+  weight_zone: 1.0
+  weight_boundary: 1.0
+  class_balanced_loss: true
+  seed: 42
+  device: auto
+  early_stopping_patience: 10
+  num_workers: 0
+
+split:
+  strategy: group_by_well
+  train_frac: 0.7
+  val_frac: 0.15
+  test_frac: 0.15
+  seed: 42
+  train_wells: null
+  val_wells: null
+  test_wells: null
+  min_wells_for_holdout_split: 8
+  n_folds: 5
+
+normalization:
+  method: robust     # "robust" (median/IQR, fit on train wells only) | "standard"
+  fit_split: train
+
+augmentation:
+  enabled: false
+  gaussian_noise_std: 0.0
+  amplitude_scale_range: [1.0, 1.0]
+  mask_probability: 0.0
+  max_depth_shift_points: 0
+
+dataset:
+  format: parquet
+  out_dir: dataset
