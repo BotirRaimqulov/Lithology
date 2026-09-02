@@ -53,18 +53,30 @@ class NormalizationStats:
     feature_names: list
     center: list
     scale: list
+    clip_value: Optional[float] = None
 
     def apply(self, matrix: np.ndarray) -> np.ndarray:
         center = np.asarray(self.center, dtype=np.float32)
         scale = np.asarray(self.scale, dtype=np.float32)
-        return (matrix - center) / scale
+        normalized = (matrix - center) / scale
+        if self.clip_value is not None:
+            # Robust (median/IQR) scaling reduces sensitivity to outliers but
+            # does not bound them -- a real curve spike (e.g. a resistivity
+            # tool glitch) orders of magnitude outside the typical range can
+            # still normalize to a huge value and overflow through the
+            # network (BatchNorm/GELU/sigmoid), producing NaN that
+            # permanently corrupts training. Clipping bounds the input
+            # regardless of how extreme the raw outlier is.
+            normalized = np.clip(normalized, -self.clip_value, self.clip_value)
+        return normalized
 
     def to_json(self) -> dict:
         return {"method": self.method, "feature_names": self.feature_names,
-                "center": self.center, "scale": self.scale}
+                "center": self.center, "scale": self.scale, "clip_value": self.clip_value}
 
 
-def fit_normalization(feature_matrices: list, feature_names: list, method: str = "robust") -> NormalizationStats:
+def fit_normalization(feature_matrices: list, feature_names: list, method: str = "robust",
+                       clip_value: Optional[float] = None) -> NormalizationStats:
     stacked = np.concatenate(feature_matrices, axis=0) if feature_matrices else np.zeros((0, len(feature_names)))
     if method == "robust":
         center = np.median(stacked, axis=0)
@@ -77,7 +89,7 @@ def fit_normalization(feature_matrices: list, feature_names: list, method: str =
         raise ValueError(f"Unknown normalization method {method!r}")
     scale = np.where(scale < 1e-8, 1.0, scale)
     return NormalizationStats(method=method, feature_names=list(feature_names),
-                               center=center.tolist(), scale=scale.tolist())
+                               center=center.tolist(), scale=scale.tolist(), clip_value=clip_value)
 
 
 @dataclass
@@ -157,7 +169,7 @@ def export_dataset(config: Config, report: DataQualityReport) -> ExportSummary:
     if split.mode in ("holdout", "explicit"):
         norm = fit_normalization(
             [frames[w].df[feature_names].to_numpy(dtype=np.float32) for w in split.train], feature_names,
-            method=config.normalization.method,
+            method=config.normalization.method, clip_value=config.normalization.clip_value,
         )
         for split_name, wells in (("train", split.train), ("val", split.val), ("test", split.test)):
             for w in wells:
@@ -173,7 +185,7 @@ def export_dataset(config: Config, report: DataQualityReport) -> ExportSummary:
         for i, fold in enumerate(split.folds):
             norm = fit_normalization(
                 [frames[w].df[feature_names].to_numpy(dtype=np.float32) for w in fold["train"]],
-                feature_names, method=config.normalization.method,
+                feature_names, method=config.normalization.method, clip_value=config.normalization.clip_value,
             )
             fold_meta_dir = out_dir / "metadata" / f"fold_{i}"
             fold_meta_dir.mkdir(parents=True, exist_ok=True)

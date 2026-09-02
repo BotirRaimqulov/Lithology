@@ -136,6 +136,13 @@ class TrainingConfig:
     device: str = "auto"  # "auto" | "cpu" | "cuda"
     early_stopping_patience: int = 10
     num_workers: int = 0
+    # Clips the gradient norm before every optimizer step. Real well-log
+    # curves (especially resistivity/KS) routinely have extreme outlier
+    # spikes; without this, one bad batch can produce an exploding gradient
+    # that pushes weights to NaN/Inf, permanently corrupting the model for
+    # every batch after it. Standard practice for sequence models; disable
+    # by setting to 0 or a negative value.
+    grad_clip_norm: float = 5.0
 
 
 # --------------------------------------------------------------------------- #
@@ -169,6 +176,12 @@ class NormalizationConfig:
     # Statistics are ALWAYS fit on the train split only (see dataset.split);
     # this flag exists purely so it is visible/auditable in the saved config.
     fit_split: str = "train"
+    # After centering/scaling, clip to +/-clip_value. Robust (median/IQR)
+    # scaling reduces sensitivity to outliers but does not bound them --
+    # a real resistivity (KS) spike orders of magnitude above the typical
+    # range can still normalize to a huge value and overflow through
+    # BatchNorm/GELU/sigmoid during training. Set to None to disable.
+    clip_value: Optional[float] = 10.0
 
 
 # --------------------------------------------------------------------------- #

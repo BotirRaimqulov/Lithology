@@ -58,6 +58,7 @@ training:
   device: auto
   early_stopping_patience: 10
   num_workers: 0
+  grad_clip_norm: 5.0    # clips gradient norm each step; guards against exploding gradients from outlier curve values
 
 split:
   strategy: group_by_well
@@ -74,6 +75,7 @@ split:
 normalization:
   method: robust     # "robust" (median/IQR, fit on train wells only) | "standard"
   fit_split: train
+  clip_value: 10.0   # clip normalized features to +/-this; guards against extreme outlier spikes (e.g. resistivity). null to disable
 
 augmentation:
   enabled: false

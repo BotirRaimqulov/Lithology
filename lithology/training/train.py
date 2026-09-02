@@ -95,10 +95,20 @@ def evaluate(model, wells: list, device, num_lithology: int, num_zone: int) -> d
     all_litho_true, all_litho_pred = [], []
     all_zone_true, all_zone_pred = [], []
     all_boundary_true, all_boundary_prob = [], []
+    diverged = False
     with torch.no_grad():
         for w in wells:
             x = torch.from_numpy(w.features.astype(np.float32)).transpose(0, 1).unsqueeze(0).to(device)
             out = model(x)
+            # Check the raw logits, not the post-argmax/sigmoid predictions:
+            # argmax over an all-NaN row silently returns a "valid-looking"
+            # class index, which would otherwise hide a diverged model
+            # behind a normal-looking (but meaningless) confusion matrix.
+            if not (torch.isfinite(out["lithology_logits"]).all()
+                    and torch.isfinite(out["zone_logits"]).all()
+                    and torch.isfinite(out["boundary_logits"]).all()):
+                diverged = True
+
             litho_pred = out["lithology_logits"].argmax(-1).squeeze(0).cpu().numpy()
             zone_pred = out["zone_logits"].argmax(-1).squeeze(0).cpu().numpy()
             boundary_prob = torch.sigmoid(out["boundary_logits"]).squeeze(0).cpu().numpy()
@@ -117,7 +127,7 @@ def evaluate(model, wells: list, device, num_lithology: int, num_zone: int) -> d
         np.concatenate(all_zone_true), np.concatenate(all_zone_pred), num_zone
     )
     boundary_m = boundary_metrics(np.concatenate(all_boundary_true), np.concatenate(all_boundary_prob))
-    return {"lithology": litho_metrics, "zone": zone_metrics, "boundary": boundary_m}
+    return {"lithology": litho_metrics, "zone": zone_metrics, "boundary": boundary_m, "diverged": diverged}
 
 
 def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> TrainResult:
@@ -175,22 +185,55 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
     for epoch in range(config.training.epochs):
         model.train()
         epoch_losses = []
+        n_skipped_batches = 0
         for batch in loader:
             batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
             optimizer.zero_grad()
             out = model(batch["features"])
             loss, parts = loss_fn(out, batch)
+
+            if not torch.isfinite(loss):
+                # A non-finite loss (e.g. from an extreme outlier curve value
+                # slipping past normalization) must NEVER be backpropagated:
+                # loss.backward() would produce NaN gradients that permanently
+                # corrupt every weight in the model for all future batches.
+                # Skip this batch's update entirely instead.
+                n_skipped_batches += 1
+                continue
+
             loss.backward()
+            if config.training.grad_clip_norm and config.training.grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.grad_clip_norm)
             optimizer.step()
             epoch_losses.append(parts)
 
+        if n_skipped_batches:
+            print(f"[epoch {epoch}] WARNING: skipped {n_skipped_batches} batch(es) with non-finite loss "
+                  f"(outlier curve values or an unstable learning rate are the usual cause).")
+
         avg_loss = {k: float(np.mean([p[k] for p in epoch_losses])) for k in epoch_losses[0]} if epoch_losses else {}
         val_metrics = evaluate(model, val_wells, device, num_lithology, num_zone) if val_wells else {}
+        diverged = val_metrics.get("diverged", False)
         val_score = val_metrics.get("lithology", {}).get("macro_f1", 0.0) if val_wells else avg_loss.get("loss_total", 0.0) * -1
 
-        record = {"epoch": epoch, "train_loss": avg_loss, "val_metrics": val_metrics}
+        record = {"epoch": epoch, "train_loss": avg_loss, "val_metrics": val_metrics,
+                  "n_skipped_batches": n_skipped_batches}
         history.append(record)
         (run_dir / "training_log.json").write_text(json.dumps(history, indent=2))
+
+        if diverged:
+            # Never checkpoint a model whose own forward pass produced
+            # NaN/Inf -- doing so would silently hand back a broken
+            # "best" model whose metrics (computed from argmax over NaN,
+            # which looks like an ordinary if bad prediction) don't reveal
+            # anything is wrong.
+            print(f"[epoch {epoch}] WARNING: model produced NaN/Inf predictions on the validation "
+                  f"set (diverged). Not saving this epoch's checkpoint. If this persists, lower "
+                  f"training.learning_rate and/or training.grad_clip_norm in the config.")
+            patience_left -= 1
+            if patience_left <= 0:
+                break
+            continue
 
         improved = val_score > best_val_metric
         if improved:
@@ -206,6 +249,12 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
             patience_left -= 1
             if patience_left <= 0:
                 break
+
+    if best_epoch == -1:
+        print("WARNING: no epoch produced a valid (non-diverged, improving) checkpoint. "
+              "No checkpoint_best.pt was written -- the model never stabilized. Lower "
+              "training.learning_rate, keep training.grad_clip_norm enabled, and re-check "
+              "normalization.clip_value before retrying.")
 
     return TrainResult(run_dir=str(run_dir), best_val_metric=best_val_metric, best_epoch=best_epoch,
                         history=history)
