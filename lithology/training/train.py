@@ -37,13 +37,31 @@ from lithology.models.multitask import MultiTaskLithologyModel
 try:
     from tqdm import tqdm
 except ImportError:  # progress bars are a convenience, never a hard requirement
-    def tqdm(iterable=None, **kwargs):
-        return iterable if iterable is not None else _NoOpProgressBar()
-
     class _NoOpProgressBar:
-        def update(self, *a, **k): pass
-        def set_postfix(self, *a, **k): pass
-        def close(self): pass
+        """Drop-in stand-in for tqdm when it isn't installed: iterates the
+        wrapped iterable and no-ops every progress-bar-only method, so
+        callers can use the same set_postfix()/close()/tqdm.write() API
+        either way without an AttributeError."""
+
+        def __init__(self, iterable=None, **kwargs):
+            self._iterable = iterable if iterable is not None else []
+
+        def __iter__(self):
+            return iter(self._iterable)
+
+        def update(self, *a, **k):
+            pass
+
+        def set_postfix(self, *a, **k):
+            pass
+
+        def close(self):
+            pass
+
+    def tqdm(iterable=None, **kwargs):
+        return _NoOpProgressBar(iterable)
+
+    tqdm.write = print
 
 
 def set_seed(seed: int) -> None:

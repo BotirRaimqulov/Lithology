@@ -1,3 +1,6 @@
+import importlib
+import sys
+
 import numpy as np
 import pytest
 
@@ -5,6 +8,28 @@ torch = pytest.importorskip("torch")
 
 from lithology.dataset.windowing import WellArrays
 from lithology.training.train import boundary_pos_weight, evaluate
+
+
+def test_tqdm_fallback_supports_the_full_api_used_by_train(monkeypatch):
+    # Regression test: a user without tqdm installed hit
+    # AttributeError: 'DataLoader' object has no attribute 'set_postfix'
+    # because the fallback used to return the raw wrapped iterable instead
+    # of an object supporting the same set_postfix()/close()/tqdm.write()
+    # calls train() makes on it.
+    import lithology.training.train as train_module
+
+    monkeypatch.setitem(sys.modules, "tqdm", None)  # forces ImportError on `from tqdm import tqdm`
+    try:
+        importlib.reload(train_module)
+        bar = train_module.tqdm([1, 2, 3], desc="epochs")
+        assert list(bar) == [1, 2, 3]
+        bar.set_postfix(loss="0.1234")  # must not raise AttributeError
+        bar.update()
+        bar.close()
+        train_module.tqdm.write("a warning message")  # must not raise
+    finally:
+        monkeypatch.delitem(sys.modules, "tqdm", raising=False)
+        importlib.reload(train_module)  # restore the real tqdm for other tests
 
 
 class _StubModel(torch.nn.Module):
