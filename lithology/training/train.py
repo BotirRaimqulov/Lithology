@@ -34,6 +34,17 @@ except ImportError as e:  # pragma: no cover
 from lithology.models.losses import MultiTaskLoss
 from lithology.models.multitask import MultiTaskLithologyModel
 
+try:
+    from tqdm import tqdm
+except ImportError:  # progress bars are a convenience, never a hard requirement
+    def tqdm(iterable=None, **kwargs):
+        return iterable if iterable is not None else _NoOpProgressBar()
+
+    class _NoOpProgressBar:
+        def update(self, *a, **k): pass
+        def set_postfix(self, *a, **k): pass
+        def close(self): pass
+
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
@@ -211,11 +222,13 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
     best_epoch = -1
     patience_left = config.training.early_stopping_patience
 
-    for epoch in range(config.training.epochs):
+    epoch_bar = tqdm(range(config.training.epochs), desc="Training", unit="epoch")
+    for epoch in epoch_bar:
         model.train()
         epoch_losses = []
         n_skipped_batches = 0
-        for batch in loader:
+        batch_bar = tqdm(loader, desc=f"  epoch {epoch}", unit="batch", leave=False)
+        for batch in batch_bar:
             batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
             optimizer.zero_grad()
             out = model(batch["features"])
@@ -235,15 +248,19 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.grad_clip_norm)
             optimizer.step()
             epoch_losses.append(parts)
+            batch_bar.set_postfix(loss=f"{parts['loss_total']:.4f}")
+        batch_bar.close()
 
         if n_skipped_batches:
-            print(f"[epoch {epoch}] WARNING: skipped {n_skipped_batches} batch(es) with non-finite loss "
-                  f"(outlier curve values or an unstable learning rate are the usual cause).")
+            tqdm.write(f"[epoch {epoch}] WARNING: skipped {n_skipped_batches} batch(es) with non-finite loss "
+                       f"(outlier curve values or an unstable learning rate are the usual cause).")
 
         avg_loss = {k: float(np.mean([p[k] for p in epoch_losses])) for k in epoch_losses[0]} if epoch_losses else {}
         val_metrics = evaluate(model, val_wells, device, num_lithology, num_zone) if val_wells else {}
         diverged = val_metrics.get("diverged", False)
         val_score = val_metrics.get("lithology", {}).get("macro_f1", 0.0) if val_wells else avg_loss.get("loss_total", 0.0) * -1
+        epoch_bar.set_postfix(train_loss=f"{avg_loss.get('loss_total', float('nan')):.4f}",
+                              val_f1=f"{val_score:.4f}", best_f1=f"{max(best_val_metric, 0.0):.4f}")
 
         record = {"epoch": epoch, "train_loss": avg_loss, "val_metrics": val_metrics,
                   "n_skipped_batches": n_skipped_batches}
@@ -256,9 +273,9 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
             # "best" model whose metrics (computed from argmax over NaN,
             # which looks like an ordinary if bad prediction) don't reveal
             # anything is wrong.
-            print(f"[epoch {epoch}] WARNING: model produced NaN/Inf predictions on the validation "
-                  f"set (diverged). Not saving this epoch's checkpoint. If this persists, lower "
-                  f"training.learning_rate and/or training.grad_clip_norm in the config.")
+            tqdm.write(f"[epoch {epoch}] WARNING: model produced NaN/Inf predictions on the validation "
+                       f"set (diverged). Not saving this epoch's checkpoint. If this persists, lower "
+                       f"training.learning_rate and/or training.grad_clip_norm in the config.")
             patience_left -= 1
             if patience_left <= 0:
                 break
@@ -281,6 +298,7 @@ def train(config: Config, dataset_dir: Path, run_name: Optional[str] = None) -> 
             if patience_left <= 0:
                 break
 
+    epoch_bar.close()
     if best_epoch == -1:
         print("WARNING: no epoch produced a valid (non-diverged, improving) checkpoint. "
               "No checkpoint_best.pt was written -- the model never stabilized. Lower "

@@ -1,5 +1,5 @@
 from lithology.config import Config
-from lithology.quality.report import build_data_quality_report
+from lithology.quality.report import _bucket_las_file_warnings, build_data_quality_report
 
 LAS_TEMPLATE = """~Version
 VERS. 2.0
@@ -74,3 +74,21 @@ def test_synthetic_end_to_end_report(tmp_path):
     assert set(report.zone_distribution.keys()) == {"Q4", "N1"}
     valid, reasons = report.is_valid_for_training()
     assert valid, reasons
+
+
+def test_las_warnings_are_bucketed_not_repeated_per_file():
+    warnings = []
+    for i in range(49):
+        fn = f"{2000 + i}.las"
+        if i % 4 != 0:
+            warnings.append((fn, "File decoded with fallback encoding 'cp1251' (utf-8 failed)."))
+        # per-curve missing-value notes are redundant with the aggregate
+        # "Depth points / missing values" section and must be dropped entirely
+        warnings.append((fn, f"Curve 'GK' (raw 'GK'): {20 + i}/3600 points (0.6%) are NULL -> NaN."))
+
+    buckets = _bucket_las_file_warnings(warnings)
+    assert len(buckets) == 1  # only the encoding-fallback bucket survives
+    shape, entry = buckets[0]
+    assert "utf-#" in shape  # hyphen preserved, not swallowed by number-collapsing
+    assert entry["count"] == 36  # 49 - ceil(49/4) files hit the i % 4 != 0 branch
+    assert len(entry["examples"]) <= 3

@@ -14,5 +14,8 @@ matplotlib>=3.7
 # Dev / testing
 pytest>=7.4
 
+# CLI progress bars (training loop)
+tqdm>=4.65
+
 # Tested against: numpy 2.4, pandas 3.0, pyarrow 25, torch 2.13,
 # scikit-learn 1.9, matplotlib 3.11 (see tests/ -- 46 passing).

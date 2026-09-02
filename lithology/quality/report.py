@@ -40,6 +40,36 @@ def _bucket_dropped_reasons(dropped: list) -> dict:
     return dict(counts.most_common())
 
 
+_REDUNDANT_LAS_WARNING_RE = re.compile(r"points \([^)]*%\) are NULL -> NaN")
+
+
+def _bucket_las_file_warnings(warnings: list, max_examples: int = 3) -> list:
+    """Group (filename, message) LAS parser warnings by message *shape*
+    across files, so 49 files each logging the same kind of note (e.g. a
+    cp1251 encoding fallback) show up as one bucketed line with a count and
+    a couple of example filenames instead of flooding the report with one
+    line per file.
+
+    Per-curve "N/M points (X%) are NULL -> NaN" messages are dropped here
+    entirely -- that information is already shown, aggregated across all
+    wells, in the "Depth points / missing values" section above; repeating
+    it per file adds noise without adding information.
+    """
+    buckets: dict = {}
+    for filename, message in warnings:
+        if _REDUNDANT_LAS_WARNING_RE.search(message):
+            continue
+        # No leading +/- in the pattern (unlike _bucket_dropped_reasons):
+        # these messages contain hyphenated tokens like "utf-8" where a
+        # signed-number match would wrongly swallow the hyphen too.
+        shape = re.sub(r"\d+\.?\d*", "#", message)
+        entry = buckets.setdefault(shape, {"count": 0, "examples": []})
+        entry["count"] += 1
+        if filename not in entry["examples"] and len(entry["examples"]) < max_examples:
+            entry["examples"].append(filename)
+    return sorted(buckets.items(), key=lambda kv: -kv[1]["count"])
+
+
 @dataclass
 class DataAvailability:
     las_dir: str
@@ -66,6 +96,7 @@ class DataQualityReport:
     stratigraphy_dropped: list = field(default_factory=list)
     lithology_warnings: list = field(default_factory=list)
     stratigraphy_warnings: list = field(default_factory=list)
+    las_file_warnings: list = field(default_factory=list)   # (filename, message) -- bucketed in to_text()
     well_match: Optional[WellMatchReport] = None
 
     total_depth_points: int = 0
@@ -214,6 +245,16 @@ class DataQualityReport:
         for r in reasons:
             lines.append(f"    - {r}")
 
+        las_buckets = _bucket_las_file_warnings(self.las_file_warnings)
+        if las_buckets:
+            lines.append("")
+            lines.append("-- LAS parser notes (grouped across files) " + "-" * 34)
+            for shape, entry in las_buckets:
+                examples = ", ".join(entry["examples"])
+                more = entry["count"] - len(entry["examples"])
+                suffix = f" (e.g. {examples}{f', +{more} more' if more > 0 else ''})"
+                lines.append(f"    - x{entry['count']}: {shape}{suffix}")
+
         if self.warnings:
             lines.append("")
             lines.append("-- General warnings " + "-" * 57)
@@ -259,7 +300,7 @@ def build_data_quality_report(config: Config) -> DataQualityReport:
             )
             continue
         las_by_well_raw[las.well_raw] = las
-        report.warnings.extend(f"[{path.name}] {w}" for w in las.warnings)
+        report.las_file_warnings.extend((path.name, w) for w in las.warnings)
     report.las_files_parsed = las_by_well_raw
 
     lithology_records, stratigraphy_records = [], []
